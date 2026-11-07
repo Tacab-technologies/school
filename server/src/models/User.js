@@ -1,0 +1,117 @@
+import mongoose from "mongoose";
+import bcrypt from "bcrypt";
+
+
+const userSchema = new mongoose.Schema(
+  {
+    firstName: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+
+    lastName: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+
+    email: {
+      type: String,
+      required: true,
+      unique: true,
+      lowercase: true,
+      trim: true,
+    },
+
+    password: {
+      type: String,
+      required: true,
+    },
+
+    // A built-in role key (admin, principal, ...) or the key of a custom role
+    // made on the Roles page (see config/access.js and models/AccessRole.js).
+    // Checked against both in the user controller before it is saved.
+    role: {
+      type: String,
+      trim: true,
+      default: "student",
+    },
+
+    // Hashed refresh tokens, one per signed-in device (see authController).
+    refreshTokens: {
+      type: [String],
+      default: [],
+      select: false,
+      index: true,
+    },
+
+    createBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+
+    status: {
+      type: Boolean,
+      default: true,
+    },
+
+    lastLogin: {
+      type: Date,
+    },
+
+    // Set when staff hand out a password (a new login or a reset). Until the
+    // person picks their own, authenticate only lets them change it, sign out
+    // or read /auth/me. Cleared by POST /api/auth/change-password.
+    mustChangePassword: {
+      type: Boolean,
+      default: false,
+    },
+
+    profilePicture: {
+      type: String,
+      default: "",
+    },
+
+    passwordResetToken: {
+      type: String,
+    },
+
+    passwordResetExpires: {
+      type: Date,
+    },
+  },
+  {
+    timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
+  }
+);
+
+// Full name virtual
+userSchema.virtual("name").get(function () {
+  return [this.firstName, this.lastName].filter(Boolean).join(" ");
+});
+
+// Hash password before saving
+userSchema.pre("save", async function (next) {
+  if (!this.isModified("password")) return next();
+
+  try {
+    const salt = await bcrypt.genSalt(10);
+    this.password = await bcrypt.hash(this.password, salt);
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Compare password
+userSchema.methods.matchPassword = async function (enteredPassword) {
+  return bcrypt.compare(enteredPassword, this.password);
+};
+
+const User = mongoose.model("User", userSchema);
+
+export default User;

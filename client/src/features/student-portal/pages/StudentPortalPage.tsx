@@ -1,0 +1,189 @@
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { SquaresFour, User, ClipboardText, CalendarBlank, CurrencyDollar, Gear, UserCircle, CaretLeft, Exam, type Icon } from '@phosphor-icons/react';
+
+import { useAuth } from '../../../hooks/useAuth';
+import type { Student } from '../../students/types';
+import { studentsApi } from '../../students/api/studentsApi';
+import AdminStudentSearch from './AdminStudentSearch';
+import { portalApi } from '../api/portalApi';
+import { PortalProvider } from '../context/PortalContext';
+import ProfileContextBanner from '../components/ProfileContextBanner';
+import DashboardTab from '../components/tabs/DashboardTab';
+import ProfileTab from '../components/tabs/ProfileTab';
+import AttendanceTab from '../components/tabs/AttendanceTab';
+import TimetableTab from '../components/tabs/TimetableTab';
+import FeesTab from '../components/tabs/FeesTab';
+import ResultsTab from '../components/tabs/ResultsTab';
+import SettingsTab from '../components/tabs/SettingsTab';
+import { TAB_IDS, type TabId } from '../types';
+import { Button } from '@/components/ui/button';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+
+type TabDef = { id: TabId; label: string; icon: Icon };
+
+
+function StudentPortalContent({ student }: { student: Student | null }) {
+  const { role } = useAuth();
+  const isStudent = role === 'student';
+  const [searchParams, setSearchParams] = useSearchParams();
+  const rawTab = searchParams.get('tab');
+  // Settings (theme, password) belong to whoever is signed in, so staff
+  // looking at a student's portal don't get that tab.
+  const allowed = TAB_IDS.filter((id) => isStudent || id !== 'settings');
+  const tab: TabId = allowed.includes(rawTab as TabId) ? (rawTab as TabId) : 'dashboard';
+
+  const setTab = (next: TabId) => {
+    setSearchParams((prev) => {
+      const params = new URLSearchParams(prev);
+      params.set('tab', next);
+      return params;
+    });
+  };
+
+  const allTabs: TabDef[] = [
+    { id: 'dashboard',     label: 'Dashboard',     icon: SquaresFour },
+    { id: 'profile',       label: 'My Profile',    icon: User },
+    { id: 'attendance',    label: 'Attendance',    icon: ClipboardText },
+    { id: 'timetable',     label: 'Timetable',     icon: CalendarBlank },
+    { id: 'results',       label: 'Results',       icon: Exam },
+    { id: 'fees',          label: 'Fees',          icon: CurrencyDollar },
+    { id: 'settings',      label: 'Settings',      icon: Gear },
+  ];
+  const tabs = allTabs.filter((t) => allowed.includes(t.id));
+
+  const tabContent = (
+    <>
+      {tab === 'dashboard'     && <DashboardTab onNavigate={setTab} />}
+      {tab === 'profile'       && <ProfileTab student={student} />}
+      {tab === 'attendance'    && <AttendanceTab />}
+      {tab === 'timetable'     && <TimetableTab />}
+      {tab === 'results'       && <ResultsTab />}
+      {tab === 'fees'          && <FeesTab />}
+      {tab === 'settings'      && <SettingsTab />}
+    </>
+  );
+
+  // A logged-in student navigates via the app-level portal sidebar and knows
+  // whose portal it is, so the pages start straight with their content. An
+  // admin viewing a student keeps the banner and in-content nav, since their
+  // left sidebar is the global admin one.
+  if (isStudent) {
+    return <div className="space-y-5">{tabContent}</div>;
+  }
+
+  // Staff viewing a student get the same tabs as a strip above the content.
+  return (
+    <div className="space-y-5">
+      <ProfileContextBanner student={student} />
+      <Tabs value={tab} onValueChange={(v) => setTab(v as TabId)} className="print:hidden">
+        <TabsList className="h-auto w-full justify-start overflow-x-auto">
+          {tabs.map(({ id, label, icon: TabIcon }) => (
+            <TabsTrigger key={id} value={id} className="gap-2">
+              <TabIcon size={16} />
+              {label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
+      {tabContent}
+    </div>
+  );
+}
+
+// Strip shown to admins/staff so they always know whose portal they're viewing,
+// with a one-click way to go back and pick a different student.
+function ViewingBanner({ student, onChange }: { student: Student; onChange: () => void }) {
+  return (
+    <div className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-border/70 bg-card px-4 py-3">
+      <p className="flex min-w-0 items-center gap-2 truncate text-sm">
+        <UserCircle size={18} className="shrink-0 text-muted-foreground" />
+        Viewing the portal of <span className="font-semibold">{student.firstName} {student.lastName}</span>
+        <span className="font-mono text-xs text-muted-foreground">{student.admissionNumber}</span>
+      </p>
+      <Button variant="outline" size="xs" onClick={onChange} className="shrink-0">
+        <CaretLeft size={14} /> <span className="hidden sm:inline">Change student</span><span className="sm:hidden">Change</span>
+      </Button>
+    </div>
+  );
+}
+
+export default function StudentPortalPage() {
+  const { role } = useAuth();
+  const isStudent = role === 'student';
+
+  // Admin/staff must search for and select a student first; a logged-in student
+  // sees their own portal directly.
+  const [selected, setSelected] = useState<Student | null>(null);
+  const [meProfile, setMeProfile] = useState<Student | null>(null);
+  const [loadError, setLoadError] = useState('');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const studentIdParam = searchParams.get('studentId');
+
+  // If navigated directly with ?studentId=..., load that student automatically
+  useEffect(() => {
+    if (isStudent || !studentIdParam || selected?._id === studentIdParam) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const s = await studentsApi.getById(studentIdParam);
+        if (!cancelled && s) { setSelected(s); setLoadError(''); }
+      } catch {
+        if (!cancelled) setLoadError("That student couldn't be opened. Pick a student below.");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isStudent, studentIdParam, selected]);
+
+  // "Change student" goes back to the search (and forgets the student in the URL).
+  const changeStudent = () => {
+    setSelected(null);
+    setSearchParams({}, { replace: true });
+  };
+
+  // A logged-in student loads their own real profile.
+  useEffect(() => {
+    if (!isStudent) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const p = await portalApi.getMyProfile();
+        if (!cancelled) setMeProfile(p);
+      } catch (err) {
+        const status = (err as { response?: { status?: number } })?.response?.status;
+        if (!cancelled) {
+          setLoadError(status === 404
+            ? "Your login isn't linked to a student record yet. Please contact the school office."
+            : "Your portal couldn't be loaded. Check your connection and refresh the page.");
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isStudent]);
+
+  if (isStudent && loadError) {
+    return <p className="rounded-2xl bg-tile-yellow p-6 text-sm text-tile-foreground">{loadError}</p>;
+  }
+
+  if (!isStudent && !selected) {
+    return (
+      <>
+        {loadError && <p className="mb-4 rounded-xl bg-destructive/10 px-4 py-3 text-sm text-destructive">{loadError}</p>}
+        <AdminStudentSearch onSelect={setSelected} />
+      </>
+    );
+  }
+
+  const student = isStudent ? meProfile : selected;
+  // Students use the self routes (no id); admins pass the selected student's id.
+  const studentId = isStudent ? undefined : selected?._id;
+
+  return (
+    <PortalProvider value={{ student, studentId }}>
+      {!isStudent && selected && (
+        <ViewingBanner student={selected} onChange={changeStudent} />
+      )}
+      <StudentPortalContent student={student} />
+    </PortalProvider>
+  );
+}

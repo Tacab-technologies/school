@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "server",
+      "runtimeExecutable": "pnpm.cmd",
+      "runtimeArgs": ["--dir", "server", "dev"],
+      "port": 5000
+    },
+    {
+      "name": "client",
+      "runtimeExecutable": "pnpm.cmd",
+      "runtimeArgs": ["--dir", "client", "dev"],
+      "port": 5173
+    }
+  ]
+}
